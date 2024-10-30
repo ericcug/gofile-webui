@@ -8,7 +8,6 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { createWriteStream, existsSync, statSync } = require('fs');
 const { mkdir, rmdir } = require('fs').promises;
-const readline = require('readline');
 
 const app = express();
 const server = http.createServer(app);
@@ -30,13 +29,11 @@ app.get('/', (req, res) => {
 });
 
 app.post('/download', async (req, res) => {
-    const urls = req.body.urls.filter(url => url.trim().startsWith('http'));
+    const url = req.body.url.trim();
 
-    if (urls.length === 0) {
-        return res.status(400).send('No valid URLs provided');
+    if (!url.startsWith('http')) {
+        return res.status(400).send('No valid URL provided');
     }
-
-    const downloadDir = '/downloads';
 
     class GoFileDownloader {
         constructor(url, password = null, maxWorkers = 5) {
@@ -56,7 +53,7 @@ app.post('/download', async (req, res) => {
             if (!this.token) {
                 this.token = await this.getToken();
             }
-            await this.parseUrlOrFile(url, password);
+            await this.download(url, password);
         }
 
         async getToken() {
@@ -263,21 +260,6 @@ app.post('/download', async (req, res) => {
             process.chdir(this.rootDir);
         }
 
-        printListFiles() {
-            const MAX_FILENAME_CHARACTERS = 100;
-            const width = Math.max(...Object.keys(this.filesInfo).map(k => `[${k}] -> `.length));
-
-            for (const [k, v] of Object.entries(this.filesInfo)) {
-                const filepath = path.join(v.path, v.filename);
-                const displayPath = filepath.length > MAX_FILENAME_CHARACTERS
-                    ? `...${filepath.slice(-MAX_FILENAME_CHARACTERS)}`
-                    : filepath;
-
-                const text = `${`[${k}] -> `.padEnd(width)}${displayPath}`;
-                log(`${text}${NEW_LINE}${'-'.repeat(text.length)}`);
-            }
-        }
-
         async download(url, password = null) {
             try {
                 const urlParts = url.split('/');
@@ -307,63 +289,11 @@ app.post('/download', async (req, res) => {
                     return;
                 }
 
-                const interactive = process.env.GF_INTERACTIVE === '1';
-
-                if (interactive) {
-                    this.printListFiles();
-
-                    const rl = readline.createInterface({
-                        input: process.stdin,
-                        output: process.stdout
-                    });
-
-                    const answer = await new Promise(resolve => {
-                        rl.question(`Files to download (Ex: 1 3 7 | or leave empty to download them all):: `, resolve);
-                    });
-                    rl.close();
-
-                    const inputList = answer.split(' ').filter(k => this.filesInfo[k]);
-
-                    if (inputList.length === 0) {
-                        log(`Nothing done.`);
-                        await rmdir(this.contentDir);
-                        this.resetClassProperties();
-                        return;
-                    }
-
-                    const keysToDelete = Object.keys(this.filesInfo).filter(k => !inputList.includes(k));
-                    keysToDelete.forEach(key => delete this.filesInfo[key]);
-                }
-
                 await this.threadedDownloads();
                 this.resetClassProperties();
             } catch (error) {
                 log(`Error during download: ${error.message}`);
                 throw error;
-            }
-        }
-
-        async parseUrlOrFile(urlOrFile, password = null) {
-            try {
-                const stats = await fs.stat(urlOrFile);
-                if (stats.isFile()) {
-                    const content = await fs.readFile(urlOrFile, 'utf8');
-                    const lines = content.split('\n');
-                    
-                    for (const line of lines) {
-                        const [url, linePassword] = line.trim().split(' ');
-                        await this.download(url, password || linePassword || null);
-                    }
-                } else {
-                    await this.download(urlOrFile, password);
-                }
-            } catch (error) {
-                if (error.code === 'ENOENT') {
-                    await this.download(urlOrFile, password);
-                } else {
-                    log(`Error parsing url or file: ${error.message}`);
-                    throw error;
-                }
             }
         }
 
@@ -376,9 +306,7 @@ app.post('/download', async (req, res) => {
     }
 
     try {
-        for (const url of urls) {
-            await new GoFileDownloader(url);
-        }
+        await new GoFileDownloader(url);
         res.send('Download started');
     } catch (error) {
         res.status(500).send(`Download failed: ${error.message}`);
