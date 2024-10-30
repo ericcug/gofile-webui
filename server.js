@@ -1,3 +1,4 @@
+// Import necessary modules
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
@@ -9,25 +10,31 @@ const crypto = require('crypto');
 const { createWriteStream, existsSync, statSync } = require('fs');
 const { mkdir, rmdir } = require('fs').promises;
 
+// Initialize application and server
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// Server port
 const PORT = process.env.PORT || 3000;
 
+// Middleware to parse request bodies
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
+// Log message with timestamp
 function log(message) {
     const timestamp = new Date().toISOString();
     console.log(`[${timestamp}] ${message}`);
     return `[${timestamp}] ${message}`;
 }
 
+// Serve the main page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Endpoint to handle download requests
 app.post('/download', async (req, res) => {
     const url = req.body.url.trim();
 
@@ -35,10 +42,10 @@ app.post('/download', async (req, res) => {
         return res.status(400).send('No valid URL provided');
     }
 
+    // GoFileDownloader class to handle downloads
     class GoFileDownloader {
         constructor(url, password = null, maxWorkers = 5) {
-            this.rootDir = process.env.GF_DOWNLOADDIR || process.cwd();
-            this.maxWorkers = maxWorkers;
+            this.rootDir = process.env.GF_DOWNLOADDIR || '/downloads';
             this.token = process.env.GF_TOKEN;
             this.message = ' ';
             this.contentDir = null;
@@ -50,6 +57,7 @@ app.post('/download', async (req, res) => {
         }
 
         async init(url, password) {
+            log(`Initializing GoFileDownloader for URL: ${url}`);
             if (!this.token) {
                 this.token = await this.getToken();
             }
@@ -77,16 +85,19 @@ app.post('/download', async (req, res) => {
         }
 
         async createDir(dirname) {
-            const filepath = path.join(process.cwd(), dirname);
+            const filepath = path.join(this.rootDir, dirname);
             try {
-                await mkdir(filepath);
+                await mkdir(filepath, { recursive: true });
+                log(`Directory created: ${filepath}`);
             } catch (error) {
                 if (error.code !== 'EEXIST') {
                     throw error;
                 }
+                log(`Directory already exists: ${filepath}`);
             }
         }
 
+        // Method to handle downloading content (remaining implementation same)
         async downloadContent(fileInfo) {
             const filepath = path.join(fileInfo.path, fileInfo.filename);
             if (existsSync(filepath) && statSync(filepath).size > 0) {
@@ -176,6 +187,7 @@ app.post('/download', async (req, res) => {
             }
         }
 
+        // Method to parse links recursively (remaining implementation same)
         async parseLinksRecursively(contentId, password = null) {
             const url = `https://api.gofile.io/contents/${contentId}?wt=4fd6sg89d7s6&cache=true${password ? `&password=${password}` : ''}`;
             const userAgent = process.env.GF_USERAGENT || 'Mozilla/5.0';
@@ -260,6 +272,7 @@ app.post('/download', async (req, res) => {
             process.chdir(this.rootDir);
         }
 
+        // Method to start the download process
         async download(url, password = null) {
             try {
                 const urlParts = url.split('/');
@@ -272,6 +285,8 @@ app.post('/download', async (req, res) => {
                 const hashedPassword = password
                     ? crypto.createHash('sha256').update(password).digest('hex')
                     : null;
+
+                await this.createDir(contentId);
 
                 await this.parseLinksRecursively(contentId, hashedPassword);
 
@@ -313,6 +328,7 @@ app.post('/download', async (req, res) => {
     }
 });
 
+// Start the server
 server.listen(PORT, () => {
     log(`Server is running on http://localhost:${PORT}`);
 });
